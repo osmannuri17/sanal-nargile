@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#0c1613">
+<title>Sanal Nargile — Kamera</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0c1613;--ink:#f1e8d6;--mute:#b6c0b3;--brass:#d6a84c;--ember:#ff6a2b;--glass:rgba(12,22,19,.72);--line:rgba(255,255,255,.12)}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:15px/1.4 Rubik,system-ui,sans-serif;overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;overscroll-behavior:none}
+#cv{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;touch-action:none;display:block}
+video{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none}
+.top{position:fixed;left:0;right:0;top:0;display:flex;align-items:center;gap:12px;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;background:linear-gradient(var(--glass),transparent)}
+h1{font-size:19px;margin:0;font-weight:700;white-space:nowrap}h1 span{color:var(--brass)}
+.meter{flex:1;max-width:240px;margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mute)}
+.bar{flex:1;height:8px;background:rgba(255,255,255,.15);border-radius:9px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--brass),var(--ember))}
+#hint{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 56px);transform:translateX(-50%);background:var(--glass);border:1px solid var(--line);padding:8px 16px;border-radius:999px;font-size:14px;white-space:nowrap;max-width:calc(100% - 24px);overflow:hidden;text-overflow:ellipsis;pointer-events:none;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.bottom{position:fixed;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:10px 12px calc(env(safe-area-inset-bottom) + 12px);background:linear-gradient(transparent,var(--glass))}
+.btn{font:inherit;font-size:14px;color:var(--ink);background:rgba(20,34,30,.82);border:1px solid var(--line);border-radius:12px;min-height:44px;padding:0 14px;display:inline-flex;align-items:center;cursor:pointer;white-space:nowrap;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.btn:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+.btn[aria-pressed=true],.btn.main{background:var(--brass);color:#1a1205;border-color:var(--brass)}
+#start{position:fixed;inset:0;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 50% 20%,#24392f,#0a1210 70%);text-align:center}
+#start .box{max-width:420px;display:grid;gap:16px;justify-items:center}
+#start h2{font-size:clamp(30px,8vw,44px);line-height:1.05;margin:0}
+#start h2 span{color:var(--brass)}
+#start p{margin:0;color:var(--mute);font-size:16px}
+#start ol{margin:0;padding:0 0 0 20px;text-align:left;color:var(--ink);font-size:15px;display:grid;gap:6px}
+#go{font-size:17px;min-height:52px;padding:0 28px;font-weight:500}
+#err{color:#ff9b7a;font-size:14px;min-height:1em}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<video id="vid" playsinline muted autoplay></video>
+<div class="top hidden" id="top"><h1>Sanal <span>Nargile</span></h1><div class="meter"><span>Çekiş</span><div class="bar"><i id="meter"></i></div></div></div>
+<div id="hint" class="hidden">Yüzünü kameraya göster</div>
+<div class="bottom hidden" id="bottom">
+  <button class="btn" id="flavBtn">Aroma: Elma</button>
+  <button class="btn" id="soundBtn" aria-pressed="true">Ses açık</button>
+  <button class="btn main" id="shotBtn">Fotoğraf çek</button>
+</div>
+<div id="start"><div class="box">
+  <h2>Sanal <span>Nargile</span></h2>
+  <p>Kameran yüzünü ve elini takip eder.</p>
+  <ol>
+    <li>Elini kaldır, hortum eline gelsin</li>
+    <li>Ağzına götür, birkaç saniye tut: çekiyorsun</li>
+    <li>Hortumu uzaklaştır, ağzını aç: duman çıkar</li>
+    <li>Dudaklarını "O" yap: halka halka çıkar</li>
+  </ol>
+  <button class="btn main" id="go">Kamerayı aç</button>
+  <div id="err"></div>
+</div></div>
+
+<script type="module">
+const MP='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d'),vid=document.getElementById('vid');
+const $=id=>document.getElementById(id);
+const meter=$('meter'),hint=$('hint'),errBox=$('err'),goBtn=$('go');
+const FLAV=[{n:'Elma',c:[236,244,226]},{n:'Nane',c:[222,246,240]},{n:'Karpuz',c:[252,230,234]},{n:'Üzüm',c:[238,230,250]},{n:'Şeftali',c:[252,238,224]}];
+const MAXC=5;
+let W=0,H=0,flav=0,soundOn=true,sprite,faceL=null,handL=null,running=false,lastVT=-1,fcount=0;
+const L={};
+const S={face:false,faceSeen:-9,mouth:{x:0,y:0},mw:60,open:0,funnel:0,nose:{x:0,y:0},
+  hand:false,handSeen:-9,grip:{x:0,y:0},dir:{x:0,y:-1},tip:{x:0,y:0},tail:{x:0,y:0},
+  near:false,charge:0,inMouth:0,leftLips:-9,glow:.2,vaseSmoke:0,wobble:0,ringT:0,puffs:0};
+let ptr=null,time=0;
+const parts=[],bubbles=[],ringArr=[];
+
+function makeSprite(){const s=document.createElement('canvas');s.width=s.height=128;const g=s.getContext('2d');const [r,gg,b]=FLAV[flav].c,gr=g.createRadialGradient(64,64,0,64,64,64);
+  gr.addColorStop(0,`rgba(${r},${gg},${b},.62)`);gr.addColorStop(.45,`rgba(${r},${gg},${b},.25)`);gr.addColorStop(1,`rgba(${r},${gg},${b},0)`);g.fillStyle=gr;g.fillRect(0,0,128,128);sprite=s}
+function layout(){
+  W=innerWidth;H=innerHeight;const dpr=Math.min(devicePixelRatio||1,2);cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);
+  const hk=Math.min(H*.5,W<H?W*.95:H*.6,440),s=hk/400;L.s=s;L.by=H-78;L.hx=Math.max(90*s+8,W*.16);
+  L.px=L.hx+26*s;L.py=L.by-205*s;L.rx=L.hx+100*s;L.ry=L.by-48*s;
+}
+addEventListener('resize',layout);
+
+/* ---- kamera eşleme ---- */
+function vmap(){const vw=vid.videoWidth||1280,vh=vid.videoHeight||720,sc=Math.max(W/vw,H/vh),dw=vw*sc,dh=vh*sc;return{dw,dh,ox:(W-dw)/2,oy:(H-dh)/2}}
+function mp(lm,m){return{x:m.ox+(1-lm.x)*m.dw,y:m.oy+lm.y*m.dh}}
+const sm=(o,n,k)=>{o.x+=(n.x-o.x)*k;o.y+=(n.y-o.y)*k};
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+
+function detect(){
+  if(!faceL||vid.readyState<2||vid.currentTime===lastVT)return;lastVT=vid.currentTime;fcount++;
+  const now=performance.now(),m=vmap();
+  if(fcount%2===0){
+    const r=faceL.detectForVideo(vid,now);
+    if(r.faceLandmarks&&r.faceLandmarks.length){
+      const f=r.faceLandmarks[0],up=mp(f[13],m),lo=mp(f[14],m),l=mp(f[61],m),rr=mp(f[291],m);
+      const mo={x:(up.x+lo.x)/2,y:(up.y+lo.y)/2},mw=dist(l,rr);
+      if(!S.face){S.mouth=mo;S.mw=mw}sm(S.mouth,mo,.6);S.mw+=(mw-S.mw)*.4;S.nose=mp(f[2],m);
+      S.open=Math.min(1,Math.max(0,(dist(up,lo)/Math.max(mw,1)-.06)/.4));
+      const bs={};if(r.faceBlendshapes&&r.faceBlendshapes[0])for(const c of r.faceBlendshapes[0].categories)bs[c.categoryName]=c.score;
+      if(bs.jawOpen!==undefined)S.open=Math.max(S.open*.6,Math.min(1,bs.jawOpen*1.4));
+      S.funnel=Math.max(bs.mouthFunnel||0,(bs.mouthPucker||0)*.8);
+      S.face=true;S.faceSeen=time;
+    }else if(time-S.faceSeen>(S.near?6:1.5))S.face=false;
+  }else{
+    const r=handL.detectForVideo(vid,now);
+    if(r.landmarks&&r.landmarks.length){
+      let best=null,bd=1e9;
+      for(const h of r.landmarks){const a=mp(h[4],m),b=mp(h[8],m),g={x:(a.x+b.x)/2,y:(a.y+b.y)/2},d=S.face?dist(g,S.mouth):0;if(d<bd){bd=d;best={h,g}}}
+      const pc=mp(best.h[9],m);let dx=best.g.x-pc.x,dy=best.g.y-pc.y;const dl=Math.hypot(dx,dy)||1;
+      if(!S.hand)S.grip={...best.g};sm(S.grip,best.g,.65);sm(S.dir,{x:dx/dl,y:dy/dl},.5);
+      S.hand=true;S.handSeen=time;
+    }else if(time-S.handSeen>.45)S.hand=false;
+  }
+}
+
+/* ---- ses ---- */
+let ac=null,master,noiseBuf;
+function audioInit(){if(ac){if(ac.state==='suspended')ac.resume();return}
+  try{ac=new(window.AudioContext||window.webkitAudioContext)();master=ac.createGain();master.gain.value=.7;master.connect(ac.destination);
+    noiseBuf=ac.createBuffer(1,ac.sampleRate*2,ac.sampleRate);const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1}catch(e){ac=null}}
+function blub(){if(!ac||!soundOn)return;const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain(),f=160+Math.random()*240;
+  o.frequency.setValueAtTime(f,t);o.frequency.exponentialRampToValueAtTime(f*2.3,t+.07);g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.16,t+.008);g.gain.exponentialRampToValueAtTime(.001,t+.1);
+  o.connect(g);g.connect(master);o.start(t);o.stop(t+.12)}
+let hiss=null;
+function hissSet(v){if(!ac||!soundOn){if(hiss)hiss.g.gain.value=0;return}
+  if(!hiss){const src=ac.createBufferSource(),bp=ac.createBiquadFilter(),g=ac.createGain();src.buffer=noiseBuf;src.loop=true;bp.type='bandpass';bp.frequency.value=900;bp.Q.value=.6;g.gain.value=0;src.connect(bp);bp.connect(g);g.connect(master);src.start();hiss={g,bp}}
+  hiss.g.gain.setTargetAtTime(v*.3,ac.currentTime,.06)}
+
+/* ---- duman ---- */
+function puff(x,y,vx,vy,r,gr,life,a){if(parts.length<900)parts.push({x,y,vx,vy,r,gr,life,max:life,a})}
+function update(dt){
+  time+=dt;const s=L.s;
+  // hortum ucu: el > parmak > dinlenme
+  let target=null,dir=S.dir;
+  if(S.hand){target=S.grip}else if(ptr){target=ptr;dir={x:0,y:-1}}
+  const len=Math.max(44,S.mw*.9);
+  if(target){const tip={x:target.x+dir.x*len*.55,y:target.y+dir.y*len*.55};sm(S.tip,tip,Math.min(1,dt*22));S.tail={x:S.tip.x-dir.x*len,y:S.tip.y-dir.y*len}}
+  else{sm(S.tip,{x:L.rx,y:L.ry-len},Math.min(1,dt*4));S.tail={x:S.tip.x,y:S.tip.y+len}}
+  const was=S.near;
+  S.near=!!target&&S.face&&(dist(S.tip,S.mouth)<Math.max(S.mw*1.15,42)||dist(target,S.mouth)<Math.max(S.mw*.9,36));
+  if(S.near){
+    S.charge=Math.min(MAXC,S.charge+dt);S.inMouth=Math.min(MAXC,S.inMouth+dt);
+    S.glow=Math.min(1,S.glow+dt*1.4);S.vaseSmoke=Math.min(1,S.vaseSmoke+dt*.45);S.wobble=Math.min(1,S.wobble+dt*3);
+    if(Math.random()<dt*16){bubbles.push({x:L.hx+(Math.random()-.5)*8*s,y:L.by-40*s,r:(2+Math.random()*4)*s,vy:(60+Math.random()*60)*s});blub()}
+  }else{
+    if(was)S.leftLips=time;S.charge=0;
+    S.glow=Math.max(.2,S.glow-dt*.3);S.vaseSmoke=Math.max(0,S.vaseSmoke-dt*.25);S.wobble=Math.max(0,S.wobble-dt*2);
+  }
+  meter.style.width=(S.inMouth/MAXC*100)+'%';
+  // nefes verme
+  let hv=0;
+  if(!S.near&&S.inMouth>0&&S.face&&time-S.leftLips>.2){
+    const M=S.mouth,k=S.mw/60;
+    if(S.funnel>.35&&S.open<.55){
+      S.ringT-=dt;if(S.ringT<=0&&S.inMouth>.3){ringArr.push({x:M.x,y:M.y,vx:(Math.random()-.5)*30,vy:-14-Math.random()*10,r:S.mw*.2,gr:S.mw*1.6,life:3.6,max:3.6});S.inMouth-=.55;S.ringT=.5;S.puffs++;hv=.6}
+      if(Math.random()<dt*8)puff(M.x,M.y,(Math.random()-.5)*20,8,4*k,12*k,1.8,.22);
+    }else if(S.open>.1){
+      const q=Math.min(1,S.inMouth/2),n=Math.ceil(80*dt*(.3+S.open)*(.4+q));
+      for(let i=0;i<n;i++){const a=Math.PI/2+(Math.random()-.5)*2.5,sp=(40+Math.random()*160)*(.4+S.open)*k;
+        puff(M.x+(Math.random()-.5)*S.mw*.4,M.y,Math.cos(a)*sp,Math.sin(a)*sp*.55,(5+Math.random()*7)*k,(30+Math.random()*45)*k,3.2+Math.random()*2.6,.36+.3*q)}
+      S.inMouth=Math.max(0,S.inMouth-dt*(.6+S.open*1.8));S.puffs+=dt;hv=.4+S.open*.6;
+    }else if(time-S.leftLips>3.5){
+      const N=S.nose;for(const sx of [-1,1])if(Math.random()<dt*14)puff(N.x+sx*S.mw*.15,N.y,sx*10,30+Math.random()*30,3*k,22*k,2.6,.3);
+      S.inMouth=Math.max(0,S.inMouth-dt*.5);
+    }
+  }
+  hissSet(hv);
+  if(Math.random()<dt*(3+S.glow*6))puff(L.hx+(Math.random()-.5)*20*s,L.by-400*s,(Math.random()-.5)*8,-20-Math.random()*20,3,10,2.6,.16+S.glow*.12);
+  for(let i=parts.length-1;i>=0;i--){const p=parts[i];p.vx*=1-dt*1.3;p.vy*=1-dt*1.3;p.vy-=22*dt;p.vx+=Math.sin(p.y*.018+time*1.3+i)*14*dt;
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.r+=p.gr*dt;p.gr*=1-dt*.35;p.life-=dt;if(p.life<=0||p.y<-200)parts.splice(i,1)}
+  for(let i=ringArr.length-1;i>=0;i--){const r=ringArr[i];r.x+=r.vx*dt;r.y+=r.vy*dt;r.vx*=1-dt*.4;r.r+=r.gr*dt;r.gr*=1-dt*.5;r.life-=dt;if(r.life<=0)ringArr.splice(i,1)}
+  const wl=L.by-78*s;for(let i=bubbles.length-1;i>=0;i--){const b=bubbles[i];b.y-=b.vy*dt;b.x+=Math.sin(time*9+i)*12*s*dt;if(b.y<wl)bubbles.splice(i,1)}
+  let h;
+  if(!S.face)h='Yüzünü kameraya göster';
+  else if(S.near)h=S.charge>=MAXC?'Doldu! Hortumu uzaklaştır, ağzını aç':'Çekiyorsun… fokur fokur';
+  else if(S.inMouth>.05)h=S.funnel>.35&&S.open<.55?'Halka üflüyorsun…':time-S.leftLips>3.5?'Burnundan kaçıyor… ağzını aç!':'Ağzını aç: duman · "O" yap: halka';
+  else if(!S.hand&&!ptr)h='Elini kaldır, hortum eline gelsin';
+  else h=S.puffs>0?'Bir fırt daha? Ağzına götür':'Hortumu ağzına götür';
+  if(hint.textContent!==h)hint.textContent=h;
+}
+
+/* ---- çizim ---- */
+const lerp=(a,b,t)=>a+(b-a)*t;
+function ell(x,y,rx,ry){ctx.beginPath();ctx.ellipse(x,y,Math.max(.1,rx),Math.max(.1,ry),0,0,Math.PI*2)}
+function brass(x0,x1){const g=ctx.createLinearGradient(x0,0,x1,0);g.addColorStop(0,'#5e4416');g.addColorStop(.35,'#f1d081');g.addColorStop(.6,'#b8862e');g.addColorStop(1,'#4d3610');return g}
+function drawVideo(){
+  if(vid.readyState>=2){const m=vmap();ctx.save();ctx.translate(m.ox+m.dw,m.oy);ctx.scale(-1,1);ctx.drawImage(vid,0,0,m.dw,m.dh);ctx.restore();
+    const g=ctx.createRadialGradient(L.hx,L.by-400*L.s,0,L.hx,L.by-400*L.s,200*L.s);g.addColorStop(0,`rgba(255,110,40,${.12+S.glow*.25})`);g.addColorStop(1,'rgba(255,110,40,0)');ctx.fillStyle=g;ctx.fillRect(0,0,W,H)}
+  else{ctx.fillStyle='#0c1613';ctx.fillRect(0,0,W,H)}
+}
+function vasePath(){const {hx,by,s}=L;ctx.beginPath();ctx.moveTo(hx-20*s,by-150*s);
+  ctx.bezierCurveTo(hx-22*s,by-125*s,hx-82*s,by-122*s,hx-82*s,by-66*s);ctx.bezierCurveTo(hx-82*s,by-18*s,hx-56*s,by,hx-34*s,by);
+  ctx.lineTo(hx+34*s,by);ctx.bezierCurveTo(hx+56*s,by,hx+82*s,by-18*s,hx+82*s,by-66*s);ctx.bezierCurveTo(hx+82*s,by-122*s,hx+22*s,by-125*s,hx+20*s,by-150*s);ctx.closePath()}
+function drawHookah(){
+  const {hx,by,s}=L,glow=S.glow;
+  ctx.fillStyle='rgba(0,0,0,.45)';ell(hx,by+2,95*s,11*s);ctx.fill();
+  vasePath();const vg=ctx.createLinearGradient(hx-82*s,0,hx+82*s,0);vg.addColorStop(0,'rgba(40,120,104,.6)');vg.addColorStop(.5,'rgba(110,200,180,.3)');vg.addColorStop(1,'rgba(30,96,84,.65)');ctx.fillStyle=vg;ctx.fill();
+  ctx.save();vasePath();ctx.clip();const wl=by-78*s;
+  ctx.fillStyle=`rgba(230,232,224,${S.vaseSmoke*.45})`;ctx.fillRect(hx-90*s,by-160*s,180*s,wl-(by-160*s));
+  ctx.beginPath();ctx.moveTo(hx-90*s,wl);for(let x=-90;x<=90;x+=10)ctx.lineTo(hx+x*s,wl+Math.sin(x*.12+time*12)*S.wobble*3*s);ctx.lineTo(hx+90*s,by+5);ctx.lineTo(hx-90*s,by+5);ctx.closePath();
+  const wg=ctx.createLinearGradient(0,wl,0,by);wg.addColorStop(0,'rgba(70,170,150,.75)');wg.addColorStop(1,'rgba(20,80,70,.9)');ctx.fillStyle=wg;ctx.fill();
+  ctx.strokeStyle='rgba(214,168,76,.8)';ctx.lineWidth=5*s;ctx.beginPath();ctx.moveTo(hx,by-150*s);ctx.lineTo(hx,by-38*s);ctx.stroke();
+  ctx.strokeStyle='rgba(235,250,245,.8)';ctx.lineWidth=1.2;for(const b of bubbles){ell(b.x,b.y,b.r,b.r);ctx.stroke()}ctx.restore();
+  vasePath();ctx.strokeStyle='rgba(170,230,210,.7)';ctx.lineWidth=1.6;ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,.3)';ctx.lineWidth=3*s;ctx.beginPath();ctx.ellipse(hx-40*s,by-62*s,22*s,40*s,.25,Math.PI*.9,Math.PI*1.35);ctx.stroke();
+  ctx.fillStyle=brass(hx-9*s,hx+9*s);ctx.fillRect(hx-8*s,by-345*s,16*s,198*s);
+  for(const [y,rx,ry] of [[-152,26,7],[-200,15,10],[-238,20,14],[-290,13,8],[-332,12,6]]){ctx.fillStyle=brass(hx-rx*s,hx+rx*s);ell(hx,by+y*s,rx*s,ry*s);ctx.fill()}
+  ctx.fillStyle=brass(L.px-20*s,L.px);ctx.fillRect(hx+6*s,L.py-5*s,20*s,10*s);ell(L.px,L.py,4*s,7*s);ctx.fill();
+  ctx.fillStyle=brass(hx-66*s,hx+66*s);ell(hx,by-340*s,66*s,9*s);ctx.fill();ctx.fillStyle='rgba(255,230,160,.35)';ell(hx,by-342*s,58*s,5*s);ctx.fill();
+  ctx.beginPath();ctx.moveTo(hx-10*s,by-348*s);ctx.lineTo(hx-24*s,by-394*s);ctx.lineTo(hx+24*s,by-394*s);ctx.lineTo(hx+10*s,by-348*s);ctx.closePath();
+  const cg=ctx.createLinearGradient(hx-24*s,0,hx+24*s,0);cg.addColorStop(0,'#6b3019');cg.addColorStop(.45,'#c0673c');cg.addColorStop(1,'#5a2714');ctx.fillStyle=cg;ctx.fill();
+  ctx.fillStyle='#cfd2d0';ell(hx,by-394*s,25*s,5*s);ctx.fill();
+  const gl=ctx.createRadialGradient(hx,by-400*s,0,hx,by-400*s,46*s);gl.addColorStop(0,`rgba(255,120,40,${glow*.65})`);gl.addColorStop(1,'rgba(255,120,40,0)');ctx.fillStyle=gl;ctx.fillRect(hx-50*s,by-450*s,100*s,100*s);
+  for(const [dx,dy] of [[-13,0],[1,-2],[13,1]]){const f=glow*(.8+.2*Math.sin(time*7+dx));ctx.fillStyle=`rgb(${lerp(60,255,f)|0},${lerp(40,108,f)|0},${lerp(32,36,f)|0})`;ctx.beginPath();ctx.roundRect(hx+(dx-6)*s,by+(dy-404)*s,12*s,8*s,2*s);ctx.fill()}
+}
+function drawHose(){
+  const s=L.s,E=S.tail,d=dist(E,{x:L.px,y:L.py}),cx=(L.px+E.x)/2,cy=Math.max(L.py,E.y)+40*s+d*.3,lw=Math.max(8,11*s);
+  ctx.lineCap='round';ctx.beginPath();ctx.moveTo(L.px,L.py);ctx.quadraticCurveTo(cx,cy,E.x,E.y);
+  ctx.strokeStyle='#3a1414';ctx.lineWidth=lw+3;ctx.stroke();ctx.strokeStyle='#7a2626';ctx.lineWidth=lw;ctx.stroke();
+  ctx.setLineDash([5,5]);ctx.strokeStyle='#a8463a';ctx.lineWidth=lw*.45;ctx.stroke();ctx.setLineDash([]);
+  const T=S.tip,ang=Math.atan2(T.y-E.y,T.x-E.x),len=dist(T,E),w=Math.max(8,len*.13);
+  ctx.save();ctx.translate(E.x,E.y);ctx.rotate(ang);const g=ctx.createLinearGradient(0,-w,0,w);g.addColorStop(0,'#5e4416');g.addColorStop(.35,'#f1d081');g.addColorStop(.7,'#b8862e');g.addColorStop(1,'#4d3610');
+  ctx.fillStyle=g;ctx.beginPath();ctx.moveTo(0,-w*.9);ctx.lineTo(len*.8,-w*.55);ctx.lineTo(len,-w*.4);ctx.lineTo(len,w*.4);ctx.lineTo(len*.8,w*.55);ctx.lineTo(0,w*.9);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#2a1a08';ctx.fillRect(len*.32,-w*.75,len*.08,w*1.5);ctx.restore();
+  if(S.face&&(S.hand||ptr)&&!S.near&&S.inMouth<.05){const p=.5+.5*Math.sin(time*6);ctx.strokeStyle=`rgba(214,168,76,${.4+p*.45})`;ctx.lineWidth=2.5;ell(S.mouth.x,S.mouth.y,S.mw*.75+p*5,S.mw*.5+p*4);ctx.stroke()}
+}
+function drawSmoke(){
+  for(const p of parts){const t=p.life/p.max;ctx.globalAlpha=p.a*Math.min(1,t*1.6)*Math.min(1,(1-t)*8+.2);ctx.drawImage(sprite,p.x-p.r,p.y-p.r,p.r*2,p.r*2)}
+  for(const r of ringArr){const t=r.life/r.max,n=22,ps=r.r*.3+8;ctx.globalAlpha=.45*t;for(let i=0;i<n;i++){const a=i/n*Math.PI*2+time*.4;ctx.drawImage(sprite,r.x+Math.cos(a)*r.r-ps,r.y+Math.sin(a)*r.r*.5-ps,ps*2,ps*2)}}
+  ctx.globalAlpha=1;
+}
+let last=performance.now();
+function loop(t){const dt=Math.min((t-last)/1000,.05);last=t;try{detect()}catch(e){console.warn(e)}update(dt);drawVideo();drawHookah();drawHose();drawSmoke();requestAnimationFrame(loop)}
+
+/* ---- başlat ---- */
+async function start(){
+  goBtn.disabled=true;errBox.textContent='';audioInit();
+  try{
+    goBtn.textContent='Kamera açılıyor…';
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}},audio:false});
+    vid.srcObject=stream;await vid.play();
+  }catch(e){goBtn.disabled=false;goBtn.textContent='Kamerayı aç';
+    errBox.textContent=location.protocol!=='https:'&&location.hostname!=='localhost'?'Kamera sadece https adreste çalışır.':'Kamera açılamadı. İzin ver ya da Instagram içinden değil Safari/Chrome ile aç.';return}
+  goBtn.textContent='Takip modeli yükleniyor…';
+  try{
+    const {FilesetResolver,FaceLandmarker,HandLandmarker}=await import(MP+'/vision_bundle.mjs');
+    const fs=await FilesetResolver.forVisionTasks(MP+'/wasm');
+    const mk=async(del)=>Promise.all([
+      FaceLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',delegate:del},runningMode:'VIDEO',numFaces:1,outputFaceBlendshapes:true}),
+      HandLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',delegate:del},runningMode:'VIDEO',numHands:2})]);
+    try{[faceL,handL]=await mk('GPU')}catch(e){[faceL,handL]=await mk('CPU')}
+  }catch(e){errBox.textContent='Takip modeli yüklenemedi, internet bağlantını kontrol et.';goBtn.disabled=false;goBtn.textContent='Tekrar dene';console.error(e);return}
+  $('start').classList.add('hidden');for(const id of ['top','hint','bottom'])$(id).classList.remove('hidden');
+}
+goBtn.addEventListener('click',start);
+$('flavBtn').addEventListener('click',e=>{flav=(flav+1)%FLAV.length;makeSprite();e.currentTarget.textContent='Aroma: '+FLAV[flav].n});
+$('soundBtn').addEventListener('click',e=>{soundOn=!soundOn;audioInit();e.currentTarget.setAttribute('aria-pressed',soundOn);e.currentTarget.textContent=soundOn?'Ses açık':'Ses kapalı'});
+$('shotBtn').addEventListener('click',()=>{cv.toBlob(async b=>{if(!b)return;const f=new File([b],'nargile.png',{type:'image/png'});
+  try{if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:'Sanal Nargile'});return}}catch(e){if(e.name==='AbortError')return}
+  const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='nargile.png';document.body.appendChild(a);a.click();a.remove()},'image/png')});
+// el algılanmazsa parmakla da sürüklenebilir
+cv.addEventListener('pointerdown',e=>{audioInit();ptr={x:e.clientX,y:e.clientY-(e.pointerType==='touch'?34:0)};try{cv.setPointerCapture(e.pointerId)}catch(_){}});
+cv.addEventListener('pointermove',e=>{if(ptr)ptr={x:e.clientX,y:e.clientY-(e.pointerType==='touch'?34:0)}});
+for(const ev of ['pointerup','pointercancel','lostpointercapture'])cv.addEventListener(ev,()=>{ptr=null});
+if(!CanvasRenderingContext2D.prototype.roundRect)CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h){this.rect(x,y,w,h)};
+makeSprite();layout();S.tip={x:L.rx,y:L.ry-44};S.tail={x:L.rx,y:L.ry};requestAnimationFrame(loop);
+</script>
+</body>
+</html>
